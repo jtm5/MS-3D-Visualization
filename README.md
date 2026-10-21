@@ -4,6 +4,9 @@ An interactive, single-file web page for building intuition about **VHF forward 
 
 Current setup: WDPN-TV (Philadelphia, ch 2, 54.309441 MHz pilot) → receiver near Washington DC, about a 210 km baseline.
 
+Included is a partial update of the K1FR-WDPN code for Rob, NN4NT, and each script for that has "_Rob" at the end. This code uses
+NN4NT coordinates and an imaginary TX site 210 km NE. The TX site will need changing to a real emitter to include the antenna altitude.
+
 ## Files
 
 | File | Purpose |
