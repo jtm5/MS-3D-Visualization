@@ -65,12 +65,76 @@ The math runs live in the page's JavaScript: f<sub>D</sub> = −(v/λ) · v̂ ·
 
 ## Adapting to your own TX and RX sites
 
-1. In `meteor_doppler_wdpn.py`, edit `TX` and `RX` (`(lat°, lon°, height m)`) and the carrier frequency `F` in Hz.
-2. Update the hard-coded values in `meteor_3d_interactive.py` that assume a 210 km baseline:
-   - The slider range of **Reflection point along path** (`min`/`max` of `#x`) should be about ± half the baseline.
-   - The preset positions (`-52`, `0`, `52`) should be about ±¼ of the baseline.
-   - The ground patch extent (`±330` km) and the **Offset** range should be scaled to the baseline.
-3. Change the labels: the title (`WDPN 54.31 MHz → RX`), the `WDPN TX` marker, and the "+ = NW" offset note. Check the sign of the offset against your geometry.
-4. Run `python meteor_3d_interactive.py` and open the new HTML.
+There are two files to touch. Everything else (the geometry, the Doppler math, the page logic) follows from them. Line numbers below are approximate; search for the quoted text instead if they have drifted.
+
+### Step 1: Set the sites and frequency in `meteor_doppler_wdpn.py`
+
+Near the top of the file, in the "Constants" and "Station positions" blocks:
+
+| Name | What it is | Format |
+|---|---|---|
+| `F` | Transmitter carrier frequency | Hz, for example `54.309441e6` |
+| `RX` | Receiver position | `(latitude°, longitude°, height m)` |
+| `TX` | Transmitter position | `(latitude°, longitude°, height m)` |
+
+- Use decimal degrees: north and east are positive, so a US longitude is negative.
+- Height is metres above the ellipsoid, not above ground. Use the antenna height above sea level plus the tower height for a real emitter.
+- The file keeps a second, commented-out `RX`/`TX` pair (Huntsville and an assumed site 210 km NE). Comment one pair out and the other in to switch between setups.
+- The speed default is also here (`V_KMS`). You can override it without editing: `python meteor_doppler_wdpn.py 30` runs the static plots at 30 km/s. The interactive page has its own speed slider.
+
+Quick check: running `python meteor_doppler_wdpn.py` prints the wavelength and the ground baseline length in km. Note that baseline number, because you need it in the next step.
+
+### Step 2: Rescale the page in `meteor_3d_interactive.py`
+
+The generator builds an HTML page from the template string `PAGE`. The slider ranges and a few numbers inside it were chosen for a 210 km baseline, so a longer or shorter baseline needs them changed. Search for the text in the **Find** column.
+
+| What to change | Find | Default (210 km baseline) | Set it to |
+|---|---|---|---|
+| Along-path slider range | `id="x" type="range"` | `min="-105" max="105"` | about ± half your baseline |
+| Along-path starting value | the `value=` on that same slider | `-52` | ¼ of the baseline, toward the RX |
+| Preset buttons | `{q:-52,m:0,t:52}` (near the bottom of the script) | `-52`, `0`, `52` | −¼, 0, +¼ of the baseline |
+| Offset slider range | `id="y" type="range"` | `min="-250" max="250"` | roughly ± the baseline or a bit more |
+| Ground patch size | the `// ground:` comment, then `x=-330+15*j` and `y=-330+15*i` | ±330 km, 45 × 45 grid, 15 km spacing | enough to cover both stations and the ellipsoid |
+
+For the ground patch, keep the grid symmetric: the start value (`-330`) times 2 should equal the step (`15`) times the loop count (`44`, so 660). If you change one, change the others. The patch follows the curve of the Earth, so a large patch will visibly drop away at its edges.
+
+### Step 3: How to use the sliders
+
+The **Reflection point along path** and **Offset from path** sliders place the meteor trail's reflection point on the ground below it; **Altitude** lifts it.
+
+- **Along path**: `0` is the midpoint of the baseline. Negative values move toward the RX, positive toward the TX. The ends of the slider are the stations themselves. Use the **¼ from RX / Midpoint / ¼ from TX** buttons to jump there; they also reset the offset to 0.
+- **Offset from path**: distance in km to the side of the baseline. `+` is to the left when you face from the RX toward the TX. For the WDPN setup the TX is to the NE of the RX, so left is **NW**, and that is what the on-page label says.
+- **Altitude**: 70 to 130 km. The slider limits are in the `id="h"` line if you need a different range.
+- **Heading, Descent, Speed**: the trail's direction (degrees from north), its angle below horizontal, and its speed. These do not depend on the sites, so leave them alone.
+
+A good first session with a new site pair:
+
+1. Open the new HTML and click **Midpoint**. The reflection point should sit right between the red TX and blue RX markers.
+2. Drag **Offset** to both ends. The point should leave the baseline symmetrically and stay on the page.
+3. Click **Set descent for 0 Hz**. The readout should show a value near 0 Hz and the trail should turn green.
+
+### Step 4: Fix the labels and the offset note
+
+These are plain text in the page, so they do not affect the math:
+
+- The page title and the heading `WDPN 54.31 MHz → RX forward scatter` (the `<title>` and `<h1>` lines).
+- The marker text `WDPN TX` in the TX trace.
+- The offset label `Offset from path (+ = NW)`. If your TX is not to the NE of your RX, the left-of-baseline side will not be NW. Work out which compass direction is to the left when looking from RX toward TX, and write that in the label.
+- The slider help text in the blue-shell note is generic and can stay.
+
+### Step 5: Regenerate
+
+```bash
+python meteor_3d_interactive.py
+```
+
+This rewrites `meteor_3d_interactive.html`. Reload it in the browser (a hard refresh, Ctrl+F5, avoids a cached copy).
+
+### Common problems
+
+- **The page is blank or the shell looks wrong**: the console (F12) usually shows a JavaScript error. A stray character in one of the edited lines inside `PAGE` is the usual cause.
+- **The reflection point is nowhere near the stations**: the along-path range or preset values are still the 210 km defaults.
+- **The ground patch cuts through the stations**: the `±330` km patch is too small for your baseline.
+- **The slider directions seem backwards**: check that `TX` and `RX` are not swapped. Negative along-path values point toward the RX and positive toward the TX.
 
 The scene frame is local East/North/Up in km, centred on the ground point below the baseline midpoint. It is an exact rigid transform of ECEF, so distances and angles are true.

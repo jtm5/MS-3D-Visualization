@@ -6,13 +6,16 @@ import numpy as np
 import meteor_doppler_wdpn as m
 from plotly.offline import get_plotlyjs
 
-T, R = m.ecef(*m.TX), m.ecef(*m.RX)
-g0 = m.point_on_path(0.5, 0)
-E0, N0, U0 = m.enu(g0[0], g0[1])
-O = m.ecef(g0[0], g0[1], 0)
+T, R = m.ecef(*m.TX), m.ecef(*m.RX)          # TX and RX positions in ECEF (m)
+g0 = m.point_on_path(0.5, 0)                  # ground point at the baseline midpoint (lat, lon, alt)
+E0, N0, U0 = m.enu(g0[0], g0[1])              # local East/North/Up axes at that point (the page's x/y/z)
+O = m.ecef(g0[0], g0[1], 0)                   # origin of the page frame, in ECEF
+# loc: ECEF position (m) -> page-frame [x, y, z] in km; ldir: ECEF direction -> page-frame components (no shift/scale)
 loc = lambda p: [float(((np.asarray(p) - O) / 1e3) @ a) for a in (E0, N0, U0)]
 ldir = lambda v: [float(np.asarray(v) @ a) for a in (E0, N0, U0)]
-C = loc([0, 0, 0])
+C = loc([0, 0, 0])                            # Earth's center in the page frame (km)
+# Constants handed to the page's JS: T/R station positions, C Earth center, Z ECEF z-axis (north pole direction),
+# RE distance from origin to Earth's center (km, local radius), LAM wavelength (m)
 K = dict(T=loc(T), R=loc(R), C=C, Z=ldir([0, 0, 1]), RE=float(np.linalg.norm(C)), LAM=float(m.LAM))
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -46,29 +49,42 @@ small{color:var(--mut)}h1{font-size:15px;margin:0 0 6px}
 <div id="plots"><div id="g3" style="height:560px"></div><div id="g2" style="height:240px"></div></div></div>
 <script>__PLOTLY__</script>
 <script>
+// K = constants injected from Python (station positions, Earth center, wavelength); D2R converts degrees to radians
 const K=__K__; const D2R=Math.PI/180;
+// small 3-vector helpers: subtract, add, scale, dot, cross, norm, unit vector
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],sc=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
 const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],cr=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
 const nrm=a=>Math.sqrt(dot(a,a)),un=a=>sc(a,1/nrm(a));
-const T=K.T,R=K.R,Z=K.Z;
-const t0=un(sub(T,R)).map((v,i)=>v); const up0=[0,0,1];
+const T=K.T,R=K.R,Z=K.Z;   // TX, RX positions and polar axis, all in the page frame (km)
+const t0=un(sub(T,R)).map((v,i)=>v); const up0=[0,0,1];   // t0: unit vector RX->TX (unused below); up0: page "up"
+// tb: horizontal unit vector along the baseline (RX->TX); sd: horizontal unit vector perpendicular to it (the "offset" direction)
 const tb=un(sub(sub(T,R),sc(up0,dot(sub(T,R),up0)))), sd=cr(up0,tb);
+// local frame at point P: up = away from Earth's center, e = east, n = north (all unit vectors)
 function frame(P){const up=un(sub(P,K.C));const e=un(cr(Z,up));const n=cr(up,e);return{up,e,n}}
+// reflection point x km along the baseline and y km to the side of the origin, h km above the curved ground
 function place(x,y,h){const P0=add(sc(tb,x),sc(sd,y));return add(K.C,sc(un(sub(P0,K.C)),K.RE+h))}
+// unit velocity vector at P for heading az (deg from N) and descent d (deg below horizontal)
 function vel(P,az,d){const f=frame(P),a=az*D2R,dd=d*D2R;
   return add(add(sc(f.e,Math.cos(dd)*Math.sin(a)),sc(f.n,Math.cos(dd)*Math.cos(a))),sc(f.up,-Math.sin(dd)))}
+// bisector b = uT + uR (unit vectors from TX and RX to P)
 function bis(P){return add(un(sub(P,T)),un(sub(P,R)))}
+// Doppler (Hz) for unit velocity v at P and speed vkms (km/s); + = path shortening
 function fD(P,v,vkms){return -(vkms*1000/K.LAM)*dot(v,bis(P))}
+// Ellipsoid of constant TX->P->RX path length S with foci at TX and RX; returns surface grids X,Y,Zz plus S, a, b
+// (a, b = semi-major / semi-minor axes). Points below ground are set to null so they are not drawn.
 function ellipsoid(P){const S=nrm(sub(P,T))+nrm(sub(P,R)),c=sc(add(T,R),.5),ax=un(sub(T,R)),f=nrm(sub(T,R))/2,a=S/2,b=Math.sqrt(a*a-f*f);
+  // c = center, ax = major axis, f = focal half-distance; e1, e2 span the plane perpendicular to the axis;
+  // nt / np_ = number of latitude / longitude grid steps
   const e1=un(cr(ax,[0,0,1])),e2=cr(ax,e1),nt=50,np_=72,X=[],Y=[],Zz=[];
-  for(let i=0;i<=nt;i++){const th=Math.PI*i/nt,rx=X[i]=[],ry=Y[i]=[],rz=Zz[i]=[];
-    for(let j=0;j<=np_;j++){const ph=2*Math.PI*j/np_;
+  for(let i=0;i<=nt;i++){const th=Math.PI*i/nt,rx=X[i]=[],ry=Y[i]=[],rz=Zz[i]=[];   // th: angle from the major axis
+    for(let j=0;j<=np_;j++){const ph=2*Math.PI*j/np_;   // ph: angle around the major axis
       const p=add(add(c,sc(ax,a*Math.cos(th))),sc(add(sc(e1,Math.cos(ph)),sc(e2,Math.sin(ph))),b*Math.sin(th)));
       const under=nrm(sub(p,K.C))<K.RE;rx.push(under?null:p[0]);ry.push(under?null:p[1]);rz.push(under?null:p[2]);}}
   return{X,Y,Zz,S,a,b}}
-// ground
+// ground: 45x45 grid (15 km spacing, +-330 km) of the curved Earth surface, GX/GY/GZ = East, North, height
 const GX=[],GY=[],GZ=[];for(let i=0;i<=44;i++){GX[i]=[];GY[i]=[];GZ[i]=[];for(let j=0;j<=44;j++){const x=-330+15*j,y=-330+15*i;GX[i].push(x);GY[i].push(y);GZ[i].push(Math.sqrt(K.RE*K.RE-x*x-y*y)-K.RE)}}
-const col=s=>[[0,s],[1,s]];
+const col=s=>[[0,s],[1,s]];   // single-colour colorscale
+// 3-D traces. Indices matter: update() restyles 1 (ellipsoid), 5 (path), 6 (arrowhead), 7 (RX-P-TX lines), 8 (point P)
 const tr=[
  {type:'surface',x:GX,y:GY,z:GZ,showscale:false,opacity:.25,colorscale:col('#556b2f'),hoverinfo:'skip',name:'ground'},
  {type:'surface',x:[[0]],y:[[0]],z:[[0]],showscale:false,opacity:.33,colorscale:col('#4c78a8'),hoverinfo:'skip',name:'equal-path ellipsoid'},
@@ -79,7 +95,8 @@ const tr=[
  {type:'cone',x:[0],y:[0],z:[0],u:[1],v:[0],w:[0],sizemode:'absolute',sizeref:14,anchor:'tip',showscale:false,colorscale:col('green'),hoverinfo:'skip'},
  {type:'scatter3d',mode:'lines',x:[0,0],y:[0,0],z:[0,0],line:{color:'rgba(120,120,120,.8)',width:2},name:'RX→P→TX'},
  {type:'scatter3d',mode:'markers',x:[0],y:[0],z:[0],marker:{size:6,color:'black'},name:'reflection point'}];
-const dark=matchMedia('(prefers-color-scheme:dark)').matches;
+const dark=matchMedia('(prefers-color-scheme:dark)').matches;   // match plot text to the page theme
+// layout for the 3-D plot (lay) and, below, for the Doppler-vs-distance plot (lay2)
 const lay={margin:{l:0,r:0,t:0,b:0},showlegend:false,paper_bgcolor:'rgba(0,0,0,0)',font:{color:dark?'#ddd':'#222'},
  scene:{xaxis:{title:'East km'},yaxis:{title:'North km'},zaxis:{title:'Up km',range:[-10,140]},aspectmode:'data',camera:{eye:{x:1.2,y:-1.6,z:.8}}}};
 Plotly.newPlot('g3',tr,lay,{responsive:true});
@@ -87,14 +104,18 @@ const lay2={margin:{l:55,r:10,t:22,b:36},title:{text:'Doppler along the trail (t
  paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:dark?'#ddd':'#222'},showlegend:false,
  shapes:[{type:'rect',xref:'paper',x0:0,x1:1,yref:'y',y0:-100,y1:100,fillcolor:'rgba(26,127,55,.15)',line:{width:0}},{type:'line',x0:0,x1:0,yref:'paper',y0:0,y1:1,line:{dash:'dot',color:'gray'}}]};
 Plotly.newPlot('g2',[{x:[0],y:[0],mode:'lines',line:{color:'#d62728'}}],lay2,{responsive:true});
-const $=id=>document.getElementById(id);
+const $=id=>document.getElementById(id);   // shorthand for getElementById
+// slider ids and the unit shown next to each value label
 const ids=['x','y','h','az','d','v'],unit={x:' km',y:' km',h:' km',az:'°',d:'°',v:' km/s'};
+// recompute everything from the sliders and redraw both plots and the readout
 function update(){
+  // x: along path, y: offset, h: altitude, az: heading, d: descent, vk: speed
   const x=+$('x').value,y=+$('y').value,h=+$('h').value,az=+$('az').value,d=+$('d').value,vk=+$('v').value;
   ids.forEach(i=>$('v'+i).textContent=$(i).value+unit[i]);
+  // P: reflection point, v: unit velocity, f: Doppler (Hz), E: ellipsoid through P
   const P=place(x,y,h),v=vel(P,az,d),f=fD(P,v,vk),E=ellipsoid(P);
-  const ok=Math.abs(f)<=100,L=60;
-  const a0=sub(P,sc(v,L)),a1=add(P,sc(v,L));
+  const ok=Math.abs(f)<=100,L=60;   // ok: within +-100 Hz; L: half-length of drawn trail (km)
+  const a0=sub(P,sc(v,L)),a1=add(P,sc(v,L));   // trail endpoints, a1 = leading end
   Plotly.restyle('g3',{x:[E.X],y:[E.Y],z:[E.Zz]},[1]);
   const c=ok?'#1a7f37':'#d62728';
   Plotly.restyle('g3',{x:[[a0[0],a1[0]]],y:[[a0[1],a1[1]]],z:[[a0[2],a1[2]]],'line.color':c},[5]);
@@ -102,21 +123,27 @@ function update(){
   Plotly.restyle('g3',{x:[[R[0],P[0],T[0]]],y:[[R[1],P[1],T[1]]],z:[[R[2],P[2],T[2]]]},[7]);
   Plotly.restyle('g3',{x:[[P[0]]],y:[[P[1]]],z:[[P[2]]]},[8]);
   $('fd').textContent=(f>=0?'+':'')+f.toFixed(0)+' Hz';$('fd').className=ok?'ok':'bad';
-  const b=bis(P),fr=frame(P);
+  const b=bis(P),fr=frame(P);   // bisector and local frame, for the info text
   $('fdinfo').firstChild.innerHTML=`at reflection point; max possible ±${(vk*1000/K.LAM*nrm(b)).toFixed(0)} Hz at ${vk} km/s.<br>Path length TX→P→RX = ${E.S.toFixed(1)} km; ranges ${nrm(sub(P,R)).toFixed(0)} km (RX), ${nrm(sub(P,T)).toFixed(0)} km (TX).<br>Bisector elevation ${(Math.asin(dot(b,fr.up)/nrm(b))/D2R).toFixed(0)}°.`;
+  // Doppler sampled every km along the trail (s = signed distance from P), skipping points below ground
   const xs=[],ys=[];for(let s=-L;s<=L;s+=1){const Q=add(P,sc(v,s));if(nrm(sub(Q,K.C))<K.RE){continue}xs.push(s);ys.push(fD(Q,v,vk))}
   Plotly.react('g2',[{x:xs,y:ys,mode:'lines',line:{color:'#d62728',width:2}}],lay2);
 }
-ids.forEach(i=>$(i).addEventListener('input',update));
+ids.forEach(i=>$(i).addEventListener('input',update));   // redraw whenever any slider moves
+// "Set descent for 0 Hz": same solution as zero_doppler_desc() in meteor_doppler_wdpn.py
+// (hh = horizontal part of the bisector along the heading, bu = its vertical part; tan d = hh/bu)
 $('snap').onclick=()=>{const x=+$('x').value,y=+$('y').value,h=+$('h').value,az=+$('az').value;
   const P=place(x,y,h),b=bis(P),f=frame(P),hh=dot(b,f.e)*Math.sin(az*D2R)+dot(b,f.n)*Math.cos(az*D2R),bu=dot(b,f.up);
   let d=Math.atan2(hh,bu)/D2R;if(d<-90)d+=180;if(d>90)d-=180;
   if(d>=0&&d<=90){$('d').value=d.toFixed(1);update()}else{$('fdinfo').firstChild.innerHTML='<b>No 0 Hz descent at this heading</b> (it would have to climb: '+d.toFixed(1)+'°). Try another heading.'}};
+// preset buttons: put the reflection point 1/4 from RX, at the midpoint, or 1/4 from TX, on the baseline
 document.querySelectorAll('button[data-p]').forEach(b=>b.onclick=()=>{$('x').value={q:-52,m:0,t:52}[b.dataset.p];$('y').value=0;update()});
+// vertical exaggeration checkbox: switch between true-scale axes and a flattened manual aspect ratio
 $('ex').onchange=e=>Plotly.relayout('g3',{'scene.aspectmode':e.target.checked?'manual':'data','scene.aspectratio':{x:1,y:1,z:.5}});
 update();
 </script></body></html>"""
 
+# Inline the Plotly library and the constants K into the template, so the HTML is fully self-contained
 html = PAGE.replace("__PLOTLY__", get_plotlyjs()).replace("__K__", json.dumps(K))
 open("meteor_3d_interactive.html", "w", encoding="utf-8").write(html)
 print("wrote meteor_3d_interactive.html", round(len(html) / 1e6, 1), "MB")
