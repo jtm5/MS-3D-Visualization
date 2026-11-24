@@ -1,0 +1,9 @@
+{
+  "role": "project",
+  "upstream": "HamSCI/ai_project_template",
+  "upstream_branch": "main",
+  "synced_commit": "a09f960b204dcb2e317d452bef009b93b3421cab",
+  "synced_on": "2026-11-24",
+  "customized": ["CLAUDE.md", "ai/ai_usage_log.md"],
+  "not_adopted": ["README.md", "LICENSE", "CITATION.cff", ".claude/rules/latex-writing.md"]
+}
